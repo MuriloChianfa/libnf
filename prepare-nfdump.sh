@@ -1,7 +1,7 @@
 #!/bin/sh 
 
 #
-# Copyright (c) 2013-2015, Tomas Podermanski
+# Copyright (c) 2013-2023, Tomas Podermanski
 #    
 # This file is part of libnf.net project.
 #
@@ -21,9 +21,9 @@
 #
 
 
-NFDUMP_VERSION="1.6.25"
+NFDUMP_VERSION="1.7.1"
 NFDUMP="nfdump-$NFDUMP_VERSION"
-NFDUMP_MD5="9c79e52b5b00c7ae7a31e8c681cf17cb"
+NFDUMP_MD5="14000174cadb0b6230ef930f1a8c7c71"
 NFDUMP_SRC="$NFDUMP.tar.gz"
 NFDUMP_URL="https://github.com/phaag/nfdump/archive/v$NFDUMP_VERSION.tar.gz"
 
@@ -31,7 +31,6 @@ BZIP2_VERSION="1.0.6"
 BZIP2="bzip2-$BZIP2_VERSION"
 BZIP2_MD5="00b516f4704d4a7cb50a1d97e6e8e15b"
 BZIP2_SRC="$BZIP2.tar.gz"
-#BZIP2_URL="http://www.bzip.org/1.0.6/$BZIP2_SRC"
 BZIP2_URL="https://netcologne.dl.sourceforge.net/project/bzip2/$BZIP2_SRC"
 
 
@@ -61,13 +60,6 @@ rm -rf nfdump/ $NFDUMP
 tar xzf $NFDUMP_SRC || exit 1
 mv $NFDUMP nfdump  || exit 1
 (cd nfdump && ./bootstrap && ./configure && make clean) || exit 1
-# for version < 1.6.18
-#(cd nfdump && patch -p1 < ../nfdump-bugs.patch && cd .. ) || exit 1
-# for version < 1.6.4
-#(cd nfdump && patch -p1 < ../nfdump-thread.patch && cd .. ) || exit 1
-# for version >= 1.6.4
-#(cd nfdump && patch -p1 < ../nfdump-thread-nffile.patch && cd .. ) || exit 1
-(cd nfdump && patch -p1 < ../nfdump-thread-nfx.patch && cd .. ) || exit 1
 if [ ! -f nfdump/README ]; then
 	echo > nfdump/README
 fi
@@ -90,54 +82,18 @@ echo "##########################################################"
 echo "# STAGE 2: preparing configure and nfdump sources        #"
 echo "##########################################################"
 
-##echo "Getting configure.in from original nfdump"
-##cp nfdump/configure.ac configure.ac
-
-##echo "Adding LT_INT into configure.ac"
-##perl -pi -w -e 's/(AM_INIT_AUTOMAKE.*)/$1\nLT_INIT()\n/g;' configure.ac 
-
-##echo "Replacing AC_REVISIONin configure.ac" 
-##sed -i -e 's/AC_REVISION.*//g' configure.ac 	#makefiles
-
-##echo "Changing AC_INIT to AC_DEFINE in configure.ac" 
-##perl -pi -w -e 's/AC_INIT\((.*)\)/AC_DEFINE\(NFDUMP_VERSION,["$1"],[nfdump]\)/g;' configure.ac 
-
-##echo "Adding own AC_INIT in configure.ac" 
-##perl -pi -w -e 's/(AC_PREREQ.*)/$1\nAC_INIT\(libnf, '${LIBNF_VERSION}', tpoder\@cis.vutbr.cz\)/g;' configure.ac 
-
-##echo "Enabling NEL/NSEL in configure.ac" 
-##perl -pi -w -e 's/(AC_PROG_YACC)/CFLAGS="\$CFLAGS -DNSEL"\n\n$1/g;' configure.ac 
-
-##echo "Removing AC_OUTPUT and text from configure.ac" 
-##sed -i -e 's/AC_OUTPUT.*//g' configure.ac 	#makefiles
-##sed -i -e 's/echo ".*//g' configure.ac 		#comments
-
-##echo "Adding pthread.h checj into configure.ac" 
-##perl -pi -w -e 's/AC_HEADER_STDC/AC_HEADER_STDC\nAC_CHECK_HEADERS(pthread.h)\nLIBS="\$LIBS -lpthread"/g;' configure.ac 
-
-##echo "Adding extra configuration into configure.ac"
-##cat >> configure.ac << EOT 
-##AC_OUTPUT(Makefile include/Makefile src/Makefile examples/Makefile)
-
-##echo ""
-##echo "The libnf extends the source code of nfdump tool"
-##echo "developed by Peter Haag. Unmodified nfdump sources are"
-##echo "placed in the nfudump directory that is distributed"
-##echo "together with libnf package. Thanks for using libnf."
-##echo "For more info visit http://libnf.net."
-##echo ""
-##EOT
-
-
-FILES="nffile.c nfx.c nftree.c minilzo.c lz4.c nf_common.c grammar.y scanner.l \
-		  ipconv.c output_util.c"
+FILES="src/lib/nffile.c src/lib/nfx.c src/lib/nftree.c src/lib/minilzo.c src/lib/lz4.c \
+		src/lib/queue.c src/lib/util.c \
+		src/lib/grammar.y src/lib/scanner.l \
+		  src/lib/ipconv.c src/lib/output_util.c src/lib/sgregex/sgregex.c"
 echo "Creating symlinks for $FILES"
 for f in $FILES ; do
-	(cd src && rm -f $f && ln -s ../nfdump/bin/$f && cd ..) || exit 1
+	bf=$(basename $f)
+	(cd src && rm -f $bf && ln -s ../nfdump/$f && cd ..) || exit 1
 done
 
-rm src/grammar.c
-rm src/scanner.c
+rm src/grammar.c 2> /dev/null
+rm src/scanner.c 2> /dev/null
 
 echo ""
 echo "##########################################################"

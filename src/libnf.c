@@ -46,6 +46,7 @@
 
 #include "nfdump.h"
 #include "nffile.h"
+#include "nffileV2.h"
 #include "nfx.h"
 #include "nfnet.h"
 #include "bookkeeper.h"
@@ -56,7 +57,7 @@
 #include "nfprof.h"
 #include "nflowcache.h"
 #include "nfstat.h"
-#include "nfexport.h"
+//#include "nfexport.h"
 #include "ipconv.h"
 #include "flist.h"
 #include "util.h"
@@ -93,7 +94,7 @@ char error_str[LNF_MAX_STRING];
 pthread_mutex_t lnf_nfdump_filter_mutex;	/* mutex for operations open/close file, filter init */
 
 
-#define FLOW_RECORD_NEXT(x) x = (common_record_t *)((pointer_addr_t)x + x->size)
+#define FLOW_RECORD_NEXT(x) x = (record_header_t *)((pointer_addr_t)x + x->size)
 
 /* text description of the fields */
 lnf_field_t lnf_fields[] = {
@@ -265,6 +266,216 @@ lnf_field_t lnf_fields[] = {
 	NULL}
 };
 
+/* PackRecordV3 is no longer available for nfdump 1.7 so we have to use 
+ * own iplementation based * on source code in nfgen.c */
+static int lnf_pack_record_V3(master_record_t *master_record, nffile_t *nffile) {
+    uint32_t required;
+
+
+    required = master_record->size;
+
+    // flush current buffer to disc if not enough space
+    if (!CheckBufferSpace(nffile, required)) {
+   		lnf_seterror("%s: Not enough buffer, required: %d ", __func__, required);
+		return LNF_ERR_OTHER_MSG;
+    }
+
+    // enough buffer space available at this point
+    // AddV3Header is macro that returns delared variable v3Record
+    AddV3Header(nffile->buff_ptr, v3Record);
+    v3Record->flags = master_record->flags;
+    v3Record->engineType = master_record->engine_type;
+    v3Record->engineID = master_record->engine_id;
+
+    // first record header
+    for (int i = 0; i < master_record->numElements; i++) {
+        switch (master_record->exElementList[i]) {
+            case EXnull:
+                break;
+            case EXgenericFlowID: {
+                PushExtension(v3Record, EXgenericFlow, genericFlow);
+                genericFlow->msecFirst = master_record->msecFirst;
+                genericFlow->msecLast = master_record->msecLast;
+                genericFlow->msecReceived = master_record->msecReceived;
+                genericFlow->inPackets = master_record->inPackets;
+                genericFlow->inBytes = master_record->inBytes;
+                genericFlow->srcPort = master_record->srcPort;
+                genericFlow->dstPort = master_record->dstPort;
+                genericFlow->proto = master_record->proto;
+                genericFlow->tcpFlags = master_record->tcp_flags;
+                genericFlow->fwdStatus = master_record->fwd_status;
+                genericFlow->srcTos = master_record->tos;
+            } break;
+            case EXipv4FlowID: {
+                PushExtension(v3Record, EXipv4Flow, ipv4Flow);
+                ipv4Flow->srcAddr = master_record->V4.srcaddr;
+                ipv4Flow->dstAddr = master_record->V4.dstaddr;
+            } break;
+            case EXipv6FlowID: {
+                PushExtension(v3Record, EXipv6Flow, ipv6Flow);
+                ipv6Flow->srcAddr[0] = master_record->V6.srcaddr[0];
+                ipv6Flow->srcAddr[1] = master_record->V6.srcaddr[1];
+                ipv6Flow->dstAddr[0] = master_record->V6.dstaddr[0];
+                ipv6Flow->dstAddr[1] = master_record->V6.dstaddr[1];
+            } break;
+            case EXflowMiscID: {
+                PushExtension(v3Record, EXflowMisc, flowMisc);
+                flowMisc->input = master_record->input;
+                flowMisc->output = master_record->output;
+                flowMisc->dir = master_record->dir;
+                flowMisc->dstTos = master_record->dst_tos;
+                flowMisc->srcMask = master_record->src_mask;
+                flowMisc->dstMask = master_record->dst_mask;
+                flowMisc->biFlowDir = master_record->biFlowDir;
+                flowMisc->flowEndReason = master_record->flowEndReason;
+            } break;
+            case EXcntFlowID: {
+                PushExtension(v3Record, EXcntFlow, cntFlow);
+                cntFlow->outPackets = master_record->out_pkts;
+                cntFlow->outBytes = master_record->out_bytes;
+                cntFlow->flows = master_record->aggr_flows;
+            } break;
+            case EXvLanID: {
+                PushExtension(v3Record, EXvLan, vLan);
+                vLan->srcVlan = master_record->src_vlan;
+                vLan->dstVlan = master_record->dst_vlan;
+            } break;
+            case EXasRoutingID: {
+                PushExtension(v3Record, EXasRouting, asRouting);
+                asRouting->srcAS = master_record->srcas;
+                asRouting->dstAS = master_record->dstas;
+            } break;
+            case EXbgpNextHopV4ID: {
+                PushExtension(v3Record, EXbgpNextHopV4, bgpNextHopV4);
+                bgpNextHopV4->ip = master_record->bgp_nexthop.V4;
+            } break;
+            case EXbgpNextHopV6ID: {
+                PushExtension(v3Record, EXbgpNextHopV6, bgpNextHopV6);
+                bgpNextHopV6->ip[0] = master_record->bgp_nexthop.V6[0];
+                bgpNextHopV6->ip[1] = master_record->bgp_nexthop.V6[1];
+            } break;
+            case EXipNextHopV4ID: {
+                PushExtension(v3Record, EXipNextHopV4, ipNextHopV4);
+                ipNextHopV4->ip = master_record->ip_nexthop.V4;
+            } break;
+            case EXipNextHopV6ID: {
+                PushExtension(v3Record, EXipNextHopV6, ipNextHopV6);
+                ipNextHopV6->ip[0] = master_record->ip_nexthop.V6[0];
+                ipNextHopV6->ip[1] = master_record->ip_nexthop.V6[1];
+            } break;
+            case EXipReceivedV4ID: {
+                PushExtension(v3Record, EXipReceivedV4, ipNextHopV4);
+                ipNextHopV4->ip = master_record->ip_router.V4;
+            } break;
+            case EXipReceivedV6ID: {
+                PushExtension(v3Record, EXipReceivedV6, ipNextHopV6);
+                ipNextHopV6->ip[0] = master_record->ip_router.V6[0];
+                ipNextHopV6->ip[1] = master_record->ip_router.V6[1];
+            } break;
+            case EXmplsLabelID: {
+                PushExtension(v3Record, EXmplsLabel, mplsLabel);
+                for (int j = 0; j < 10; j++) {
+                    mplsLabel->mplsLabel[j] = master_record->mpls_label[j];
+                }
+            } break;
+            case EXmacAddrID: {
+                PushExtension(v3Record, EXmacAddr, macAddr);
+                macAddr->inSrcMac = master_record->in_src_mac;
+                macAddr->outDstMac = master_record->out_dst_mac;
+                macAddr->inDstMac = master_record->in_dst_mac;
+                macAddr->outSrcMac = master_record->out_src_mac;
+            } break;
+            case EXasAdjacentID: {
+                PushExtension(v3Record, EXasAdjacent, asAdjacent);
+                asAdjacent->nextAdjacentAS = master_record->bgpNextAdjacentAS;
+                asAdjacent->prevAdjacentAS = master_record->bgpPrevAdjacentAS;
+            } break;
+            case EXlatencyID: {
+                PushExtension(v3Record, EXlatency, latency);
+                latency->usecClientNwDelay = master_record->client_nw_delay_usec;
+                latency->usecServerNwDelay = master_record->server_nw_delay_usec;
+                latency->usecApplLatency = master_record->appl_latency_usec;
+            } break;
+            case EXvrfID: {
+                PushExtension(v3Record, EXvrf, vrf);
+                vrf->egressVrf = master_record->egressVrf;
+                vrf->ingressVrf = master_record->ingressVrf;
+            } break;
+#ifdef NSEL
+            case EXnselCommonID: {
+                PushExtension(v3Record, EXnselCommon, nselCommon);
+                nselCommon->msecEvent = master_record->msecEvent;
+                nselCommon->connID = master_record->connID;
+                nselCommon->fwXevent = master_record->fwXevent;
+                nselCommon->fwEvent = master_record->event;
+            } break;
+            case EXnselXlateIPv4ID: {
+                PushExtension(v3Record, EXnselXlateIPv4, nselXlateIPv4);
+                nselXlateIPv4->xlateSrcAddr = master_record->xlate_src_ip.V4;
+                nselXlateIPv4->xlateDstAddr = master_record->xlate_dst_ip.V4;
+            } break;
+            case EXnselXlateIPv6ID: {
+                PushExtension(v3Record, EXnselXlateIPv6, nselXlateIPv6);
+                memcpy(nselXlateIPv6->xlateSrcAddr, master_record->xlate_src_ip.V6, 16);
+                memcpy(nselXlateIPv6->xlateDstAddr, master_record->xlate_dst_ip.V6, 16);
+            } break;
+            case EXnselXlatePortID: {
+                PushExtension(v3Record, EXnselXlatePort, nselXlatePort);
+                nselXlatePort->xlateSrcPort = master_record->xlate_src_port;
+                nselXlatePort->xlateDstPort = master_record->xlate_dst_port;
+            } break;
+            case EXnselAclID: {
+                PushExtension(v3Record, EXnselAcl, nselAcl);
+                nselAcl->ingressAcl[0] = htonl(master_record->ingressAcl[0]);
+                nselAcl->ingressAcl[1] = htonl(master_record->ingressAcl[1]);
+                nselAcl->ingressAcl[2] = htonl(master_record->ingressAcl[2]);
+                nselAcl->egressAcl[0] = htonl(master_record->egressAcl[0]);
+                nselAcl->egressAcl[1] = htonl(master_record->egressAcl[1]);
+                nselAcl->egressAcl[2] = htonl(master_record->egressAcl[2]);
+            } break;
+            case EXnselUserID: {
+                PushExtension(v3Record, EXnselUser, nselUser);
+                memcpy(nselUser->username, master_record->username, 65);
+                nselUser->username[65] = '\0';
+            } break;
+            case EXnelCommonID: {
+                PushExtension(v3Record, EXnelCommon, nelCommon);
+                nelCommon->msecEvent = master_record->msecEvent;
+                nelCommon->natEvent = master_record->event;
+            } break;
+            case EXnelXlatePortID: {
+                PushExtension(v3Record, EXnelXlatePort, nelXlatePort);
+                nelXlatePort->blockStart = master_record->block_start;
+                nelXlatePort->blockEnd = master_record->block_end;
+                nelXlatePort->blockStep = master_record->block_step;
+                nelXlatePort->blockSize = master_record->block_size;
+            } break;
+#endif
+            case EXnbarAppID: {
+                PushVarLengthPointer(v3Record, EXnbarApp, nbarApp, 4);
+                memcpy(nbarApp, master_record->nbarAppID, 4);
+            } break;
+            default:
+        		lnf_seterror("%s: Unknown extension, type: %d ", __func__, master_record->exElementList[i]);
+				return LNF_ERR_OTHER_MSG;
+        }
+        if (v3Record->size > required) {
+        	lnf_seterror("%s: record size(%u) > required(%u)", __func__, v3Record->size, required);
+			return LNF_ERR_OTHER_MSG;
+        }
+    }
+
+    if (v3Record->size != required) {
+        lnf_seterror("%s: record size(%u) != expected(%u)", __func__, v3Record->size, required);
+		return LNF_ERR_OTHER_MSG;
+    }
+    nffile->block_header->NumRecords++;
+    nffile->block_header->size += v3Record->size;
+    nffile->buff_ptr += v3Record->size;
+
+	return LNF_OK;
+
+}  // End of lnf_pack_record_V3
 
 /* open existing nfdump file and prepare for reading records */
 /* only simple wrapper to nfdump function */
@@ -300,7 +511,7 @@ int lnf_open(lnf_file_t **lnf_filep, const char * filename, unsigned int flags, 
 		}
 
 		lnf_file->nffile = OpenNewFile((char *)filename, NULL, comp, 
-								flags & LNF_ANON, (char *)ident);
+								flags & LNF_ANON);
 
 	} else {
 		/* set file name in LOOP mode */
@@ -366,7 +577,8 @@ int lnf_open(lnf_file_t **lnf_filep, const char * filename, unsigned int flags, 
 /* fill info structure */
 int lnf_info(lnf_file_t *lnf_file, int info, void *data, size_t size) {
 
-	file_header_t *h;
+	//file_header_t *h;
+	fileHeaderV2_t *h;
 	stat_record_t *s;
 	size_t reqsize = 0;
 	char buf[LNF_INFO_BUFSIZE];
@@ -410,19 +622,23 @@ int lnf_info(lnf_file_t *lnf_file, int info, void *data, size_t size) {
 			reqsize = sizeof(uint64_t);
 			break;
 		case LNF_INFO_COMPRESSED:
-			*((int *)buf) = FILE_IS_LZO_COMPRESSED(lnf_file->nffile) || FILE_IS_BZ2_COMPRESSED(lnf_file->nffile) ;
+//			*((int *)buf) = FILE_IS_LZO_COMPRESSED(lnf_file->nffile) || FILE_IS_BZ2_COMPRESSED(lnf_file->nffile) ;
+			*((int *)buf) = 0;
 			reqsize = sizeof(int);
 			break;
 		case LNF_INFO_LZO_COMPRESSED:
-			*((int *)buf) = FILE_IS_LZO_COMPRESSED(lnf_file->nffile);
+//			*((int *)buf) = FILE_IS_LZO_COMPRESSED(lnf_file->nffile);
+			*((int *)buf) = 0;
 			reqsize = sizeof(int);
 			break;
 		case LNF_INFO_BZ2_COMPRESSED:
-			*((int *)buf) = FILE_IS_BZ2_COMPRESSED(lnf_file->nffile);
+//			*((int *)buf) = FILE_IS_BZ2_COMPRESSED(lnf_file->nffile);
+			*((int *)buf) = 0;
 			reqsize = sizeof(int);
 			break;
 		case LNF_INFO_ANONYMIZED:
-			*((int *)buf) = h->flags & FLAG_ANONYMIZED;
+//			*((int *)buf) = h->flags & FLAG_ANONYMIZED;
+			*((int *)buf) = 0;
 			reqsize = sizeof(int);
 			break;
 		case LNF_INFO_CATALOG: 
@@ -432,8 +648,10 @@ int lnf_info(lnf_file_t *lnf_file, int info, void *data, size_t size) {
 			reqsize = sizeof(int);
 			break;
 		case LNF_INFO_IDENT: 
-			strcpy(buf, h->ident);
-			reqsize = strlen(h->ident) + 1;
+//			strcpy(buf, h->ident);
+//			reqsize = strlen(h->ident) + 1;
+			buf[0] = '\0';
+			reqsize = 1;
 			break;
 		case LNF_INFO_PROC_BLOCKS: 
 			*((uint64_t *)buf) = lnf_file->processed_blocks;
@@ -460,15 +678,18 @@ int lnf_info(lnf_file_t *lnf_file, int info, void *data, size_t size) {
 
 	switch (info) {
 		case LNF_INFO_FIRST:
-			*((uint64_t *)buf) = s->first_seen * 1000LL + s->msec_first;
+//			*((uint64_t *)buf) = s->first_seen * 1000LL + s->msec_first;
+			*((uint64_t *)buf) = 0;
 			reqsize = sizeof(uint64_t);
 			break;
 		case LNF_INFO_LAST:
-			*((uint64_t *)buf) = s->last_seen * 1000LL + s->msec_last;
+//			*((uint64_t *)buf) = s->last_seen * 1000LL + s->msec_last;
+			*((uint64_t *)buf) = 0;
 			reqsize = sizeof(uint64_t);
 			break;
 		case LNF_INFO_FAILURES:
 			*((uint64_t *)buf) = s->sequence_failure;
+			*((uint64_t *)buf) = 0;
 			reqsize = sizeof(uint64_t);
 			break;
 		case LNF_INFO_FLOWS:
@@ -616,17 +837,17 @@ void lnf_close(lnf_file_t *lnf_file) {
 				fprintf(stderr, "Failed to write output buffer: '%s'" , strerror(errno));
 			}
 		}
-		CloseUpdateFile(lnf_file->nffile, NULL );
+		CloseUpdateFile(lnf_file->nffile);
 
 	} else {
 		CloseFile(lnf_file->nffile);
 	}
 
 	DisposeFile(lnf_file->nffile); 
-	free(lnf_file->nffile);
+//	free(lnf_file->nffile); in 1.7 is part of DisposeFile
 
-	PackExtensionMapList(lnf_file->extension_map_list);
-	FreeExtensionMaps(lnf_file->extension_map_list);
+//	PackExtensionMapList(lnf_file->extension_map_list);
+//	FreeExtensionMaps(lnf_file->extension_map_list);
 
 	map_list = lnf_file->lnf_map_list; 
 	while (map_list != NULL) {
@@ -671,7 +892,7 @@ int ret;
 uint32_t map_id;
 extension_map_t *map;
 int i;
-common_record_t *common_record_ptr;
+record_header_t *record_header_ptr;
 
 #ifdef COMPAT15
 int	v1_map_done = 0;
@@ -704,13 +925,15 @@ begin:
 
 		/* block types to be skipped  -> goto begin */
 		/* block types that are unknown -> return */
-		switch (lnf_file->nffile->block_header->id) {
+		switch (lnf_file->nffile->block_header->type) {
 			case DATA_BLOCK_TYPE_1:		/* old record type - nfdump 1.5 */
 					lnf_file->skipped_blocks++;
 					goto begin;
 					return LNF_ERR_COMPAT15;
 					break;
 			case DATA_BLOCK_TYPE_2:		/* common record type - normally processed */
+			case DATA_BLOCK_TYPE_3:		/* common record type introdoucet in 1.7 - normally processed */
+			case DATA_BLOCK_TYPE_4:		/* common record type introdoucet in 1.7 - normally processed */
 					break;
 			/*
  			removed in v1.6.19
@@ -738,7 +961,8 @@ begin:
 		case LegacyRecordType2:
 		case ExporterInfoRecordType:
 		case ExporterStatRecordType:
-		case SamplerInfoRecordype:
+		//case SamplerInfoRecordype:
+		case SamplerRecordType: /* renamed in nfdump 1.7 */
 				/* just skip */
 				FLOW_RECORD_NEXT(lnf_file->flow_record);	
 				goto begin;
@@ -767,9 +991,43 @@ begin:
 				goto begin;
 				break;
 
-		case CommonRecordType:
+		case CommonRecordType: /* legacy V2 record type - nfdump 1.6 */
+
+				/* so far we will skip tuhis type of record */
+				FLOW_RECORD_NEXT(lnf_file->flow_record);	
+				return LNF_ERR_UNKREC;
+
 				/* data record type - go ahead */
-				common_record_ptr = lnf_file->flow_record;
+				record_header_ptr = lnf_file->flow_record;
+				/* we are sure that record is CommonRecordType */
+//				map_id = lnf_file->flow_record->ext_map; /* XXX temporaty commented for v1.7 */
+				if ( map_id >= MAX_EXTENSION_MAPS ) {
+					FLOW_RECORD_NEXT(lnf_file->flow_record);	
+					return LNF_ERR_EXTMAPB;
+				}
+				if ( lnf_file->extension_map_list->slot[map_id] == NULL ) {
+					FLOW_RECORD_NEXT(lnf_file->flow_record);	
+					return LNF_ERR_EXTMAPM;
+				} 
+
+
+				// changed in 1.6.8 - added exporter info 
+				/* XXX temporaty commented for v1.7 */
+//				ExpandRecord_v2(record_header_ptr, lnf_file->extension_map_list->slot[map_id], NULL, lnf_rec->master_record);
+
+				// update number of flows matching a given map
+//				lnf_file->extension_map_list->slot[map_id]->ref_count++; /* 1.7 */
+
+
+
+//				return LNF_OK;  // we are done with  V2 record type
+				return LNF_ERR_UNKREC;
+				break;
+
+		case V3Record: /* new V3 record type - nfdump 1.7 */
+
+				ExpandRecord_v3((recordHeaderV3_t *)lnf_file->flow_record, lnf_rec->master_record);
+
 				break;
 
 		default:
@@ -778,54 +1036,24 @@ begin:
 
 	}
 
-	/* we are sure that record is CommonRecordType */
-	map_id = lnf_file->flow_record->ext_map;
-	if ( map_id >= MAX_EXTENSION_MAPS ) {
-		FLOW_RECORD_NEXT(lnf_file->flow_record);	
-		return LNF_ERR_EXTMAPB;
-	}
-	if ( lnf_file->extension_map_list->slot[map_id] == NULL ) {
-		FLOW_RECORD_NEXT(lnf_file->flow_record);	
-		return LNF_ERR_EXTMAPM;
-	} 
-
-
-	// changed in 1.6.8 - added exporter info 
-//	ExpandRecord_v2( flow_record, extension_map_list.slot[map_id], master_record);
-	ExpandRecord_v2(common_record_ptr, lnf_file->extension_map_list->slot[map_id], NULL, lnf_rec->master_record);
-
-	// update number of flows matching a given map
-	lnf_file->extension_map_list->slot[map_id]->ref_count++;
-
 	// Move pointer by number of bytes for netflow record
 	FLOW_RECORD_NEXT(lnf_file->flow_record);	
-/*
-	{
-		char *s;
-		PrintExtensionMap(instance->extension_map_list.slot[map_id]->map);
-		format_file_block_record(master_record, &s, 0);
-		printf("READ: %s\n", s);
-	}
-*/
 
 	// processing map 
-	//bit_array_clear(&lnf_file->extensions_arr);
 	bit_array_clear(lnf_rec->extensions_arr);
 
+ 
 	i = 0;
-	while (lnf_rec->master_record->map_ref->ex_id[i]) {
-		__bit_array_set(lnf_rec->extensions_arr, lnf_rec->master_record->map_ref->ex_id[i], 1);
-		i++;
+	//while (lnf_rec->master_record->map_ref->ex_id[i]) {
+	// in nfdump 1.7 map_ref i replaced by exElementList[] in master_record 
+	for (i = 0; i < lnf_rec->master_record->numElements || i < MAXEXTENSIONS  ; i++) { 
+		__bit_array_set(lnf_rec->extensions_arr, lnf_rec->master_record->exElementList[i], 1);
 	}
 
-//	lnf_rec->extensions_arr = &(lnf_file->extensions_arr);
-
-	/* the record seems OK. We prepare hash reference with items */
-//	lnf_file->lnf_rec = lnf_rec; /* XXX temporary */
-
+	/* we will never get here */
 	return LNF_OK;
 
-} /* end of _readfnction */
+} /* end of _read function */
 
 /* return next record in file */
 int lnf_read(lnf_file_t *lnf_file, lnf_rec_t *lnf_rec) {
@@ -1043,20 +1271,39 @@ exporter_t* lnf_lookup_exporter(lnf_file_t *lnf_file, lnf_rec_t *lnf_rec) {
 /* status of read and fill pre-prepared structure lnf_rec */
 int lnf_write(lnf_file_t *lnf_file, lnf_rec_t *lnf_rec) {
 
-	extension_map_t *map;
+	
+//	extension_map_t *map;
 	exporter_t *exporter;
 
 
 	/* lookup and add map into file if it it is nescessary */
-	map = lnf_lookup_map(lnf_file, lnf_rec->extensions_arr);
+//	map = lnf_lookup_map(lnf_file, lnf_rec->extensions_arr);
 
-	if (map == NULL) {
-		return LNF_ERR_WRITE;
+//	if (map == NULL) {
+//		return LNF_ERR_WRITE;
+//	}
+
+//	lnf_rec->master_record->map_ref = map;
+//	lnf_rec->master_record->ext_map = map->map_id;
+//	lnf_rec->master_record->type = CommonRecordType;
+
+	/* v 1.7 do not use extansion maps, but extensions are part of */
+	/* master_record.exElementList[] array */
+	int i = 0;
+	lnf_rec->master_record->size = V3HeaderRecordSize;
+	lnf_rec->master_record->numElements = 0;
+	for (int ext_id = 0; ext_id < MAXEXTENSIONS; ext_id++) {
+
+		if ( bit_array_get(lnf_rec->extensions_arr, ext_id) > 0 ) {
+			// etesnio with ID ext_id is set - we will add it into exElementList
+			lnf_rec->master_record->exElementList[i++] = ext_id; 
+			// add size of extension into size filed of master record (used later in pack_record)
+			// we will use size of extension stored in static table (see nfxV3.h)
+			lnf_rec->master_record->size += extensionTable[ext_id].size;
+			lnf_rec->master_record->numElements += 1;
+		}
 	}
 
-	lnf_rec->master_record->map_ref = map;
-	lnf_rec->master_record->ext_map = map->map_id;
-	lnf_rec->master_record->type = CommonRecordType;
 
 	/* lookup and add exporter record into file if it is nescessary */
 	exporter = lnf_lookup_exporter(lnf_file, lnf_rec);
@@ -1064,7 +1311,7 @@ int lnf_write(lnf_file_t *lnf_file, lnf_rec_t *lnf_rec) {
 	/* assign exporter sysid and update statistics */
 	if (exporter != NULL) {
 		lnf_rec->master_record->exporter_sysid = exporter->info.sysid;
-		exporter->packets += lnf_rec->master_record->dPkts;
+		exporter->packets += lnf_rec->master_record->inPackets;
 		exporter->flows += lnf_rec->master_record->aggr_flows;
 		exporter->sequence_failure += lnf_rec->sequence_failures;
 	}
@@ -1072,7 +1319,14 @@ int lnf_write(lnf_file_t *lnf_file, lnf_rec_t *lnf_rec) {
 
 	UpdateStat(lnf_file->nffile->stat_record, lnf_rec->master_record);
 
-	PackRecord(lnf_rec->master_record, lnf_file->nffile);
+	int ret = lnf_pack_record_V3(lnf_rec->master_record, lnf_file->nffile);
+	if (ret != LNF_OK) {
+		return ret;
+	}
+
+	if (WriteBlock(lnf_file->nffile) <= 0) {
+		return LNF_ERR_WRITE;
+	}
 
 
 	return LNF_OK;
@@ -1129,13 +1383,16 @@ int lnf_rec_init(lnf_rec_t **recp) {
 
 
 	/* initialise nfdump extension list */
+	/* 
 	i = 1;
 	numext = 0;
 	while ( extension_descriptor[i++].id ) {
 		numext++;
 	}
+	*/
 
-	if (!bit_array_init(rec->extensions_arr, numext + 1)) {
+	//if (!bit_array_init(rec->extensions_arr, numext + 1)) {
+	if (!bit_array_init(rec->extensions_arr, MAXEXTENSIONS)) {
 		lnf_rec_free(rec);
 		*recp = NULL;
 		return LNF_ERR_NOMEM;
@@ -1181,6 +1438,7 @@ void lnf_rec_clear(lnf_rec_t *rec) {
 	memset(rec->exporter, 0x0, sizeof(exporter_t));
 	memset(rec->sampler, 0x0, sizeof(sampler_t));
 	rec->flags = 0x0;
+
 
 	rec->exporter->info.version = LNF_DEFAULT_EXPORTER_VERSION;
 }
@@ -1496,10 +1754,15 @@ va_list args;
 
 /* empry functions - required by nfdump */
 void LogInfo(char *format, ...) { }
-void format_number(uint64_t num, char *s, int scale, int fixed_width) { } 
-/* dummy functions from flist.c */
-char *GetCurrentFilename(void) { return NULL; } 
-nffile_t *GetNextFile(nffile_t *nffile, time_t twin_start, time_t twin_end) { return NULL; }
-void SetupInputFileSequence(char *multiple_dirs, char *single_file, char *multiple_files) { }
+//void format_number(uint64_t num, char *s, int scale, int fixed_width) { } 
+/* dummy functions referenced in nffile.c */
+
+time_t ISO2UNIX(char *timestring) { return 0; }
+//ISO2UNIX
+//srx_MatchExt
+//srx_CreateExt
+//char *GetCurrentFilename(void) { return NULL; } 
+//nffile_t *GetNextFile(nffile_t *nffile, time_t twin_start, time_t twin_end) { return NULL; }
+//void SetupInputFileSequence(char *multiple_dirs, char *single_file, char *multiple_files) { }
 
 
