@@ -1,0 +1,106 @@
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# libnf builds
+src/libnf-info
+autom4te.cache
+bin/
+bzip2/
+examples/
+nfdump/
+src/.deps/
+src/.libs/
+src/ffilter/.deps/
+src/ffilter/.libs/
+src/ffilter/.dirstamp
+src/ffilter/ffilter_gram.c
+src/ffilter/ffilter_gram.h
+src/ffilter/ffilter_lex.c
+src/grammar.c
+src/grammar.h
+src/grammar.y
+src/ipconv.c
+src/lz4.c
+src/minilzo.c
+src/nffile.c
+src/nftree.c
+src/nfx.c
+src/output_util.c
+src/queue.c
+src/scanner.c
+src/scanner.l
+src/sgregex.c
+src/util.c
+aclocal.m4
+bzip2-*.tar.gz
+compile
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+configure
+depcomp
+INSTALL
+install-sh
+libnf.doxygen
+libnf.spec
+libtool
+ltmain.sh
+Makefile
+Makefile.in
+missing
+nfdump-*.tar.gz
+stamp-h1
+ylwrap
